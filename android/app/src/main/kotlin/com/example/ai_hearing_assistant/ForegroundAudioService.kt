@@ -1,5 +1,7 @@
 package com.example.ai_hearing_assistant
 
+import java.util.concurrent.atomic.AtomicBoolean
+import com.example.ai_hearing_assistant.audio.AudioPipeline
 import android.app.*
 import android.content.Context
 import android.content.Intent
@@ -13,7 +15,6 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import java.util.concurrent.atomic.AtomicBoolean
 
 class ForegroundAudioService : Service() {
     private val TAG = "ForegroundAudioService"
@@ -22,6 +23,7 @@ class ForegroundAudioService : Service() {
 
     private var streamingThread: Thread? = null
     private val streaming = AtomicBoolean(false)
+    private var audioPipeline: AudioPipeline? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -177,7 +179,10 @@ class ForegroundAudioService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to log buffer instance info", e)
         }
-
+        audioPipeline = AudioPipeline(
+    sampleRate = sampleRate,
+    frameSize = 128
+)
         streaming.set(true)
         streamingThread = Thread {
             try {
@@ -189,15 +194,26 @@ class ForegroundAudioService : Service() {
                     val read = record.read(buffer, 0, buffer.size)
                     val tRead = System.nanoTime()
                     if (read > 0) {
-                        track.write(buffer, 0, read)
-                        val tWrite = System.nanoTime()
-                        val latencyMs = (tWrite - tRead) / 1_000_000.0
-                        Log.d(TAG, "Audio chunk read=$read latency_ms=$latencyMs read_ts=$tRead write_ts=$tWrite")
-                    }
+
+    audioPipeline?.process(buffer, read)
+
+    track.write(buffer, 0, read)
+
+    val tWrite = System.nanoTime()
+
+    val latencyMs = (tWrite - tRead) / 1_000_000.0
+
+    Log.d(
+        TAG,
+        "Audio chunk read=$read latency_ms=$latencyMs read_ts=$tRead write_ts=$tWrite"
+    )
+}
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Audio stream error", e)
             } finally {
+                audioPipeline?.release()
+                audioPipeline = null
                 try { record.stop(); record.release() } catch (e: Exception) {}
                 try { track.stop(); track.release() } catch (e: Exception) {}
             }
