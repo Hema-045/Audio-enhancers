@@ -64,6 +64,11 @@ class MainActivity : FlutterActivity() {
 						startService(intent)
 						result.success(true)
 					}
+					"setNoiseReductionEnabled" -> {
+						val enabled = call.argument<Boolean>("enabled") ?: false
+						ForegroundAudioService.setNoiseReductionEnabled(enabled)
+						result.success(true)
+					}
 				else -> result.notImplemented()
 			}
 		}

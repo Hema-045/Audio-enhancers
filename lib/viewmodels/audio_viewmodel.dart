@@ -10,6 +10,7 @@ class AudioViewModel extends ChangeNotifier {
   AudioState _state = AudioState.idle;
   String _bluetooth = 'Unknown';
   String? _errorMessage;
+  bool _noiseReductionEnabled = false;
 
   AudioViewModel() {
     refreshStatus();
@@ -18,6 +19,7 @@ class AudioViewModel extends ChangeNotifier {
   String get bluetoothStatus => _bluetooth;
   String get streamingStatus => _state.name;
   String? get errorMessage => _errorMessage;
+  bool get noiseReductionEnabled => _noiseReductionEnabled;
 
   Future<void> refreshStatus() async {
     var bt = await _mc.getBluetoothStatus();
@@ -95,6 +97,14 @@ class AudioViewModel extends ChangeNotifier {
       _errorMessage = 'Failed to start service';
     }
     notifyListeners();
+  }
+
+  Future<void> setNoiseReductionEnabled(bool enabled) async {
+    final ok = await _mc.setNoiseReductionEnabled(enabled);
+    if (ok) {
+      _noiseReductionEnabled = enabled;
+      notifyListeners();
+    }
   }
 
   Future<void> stop() async {

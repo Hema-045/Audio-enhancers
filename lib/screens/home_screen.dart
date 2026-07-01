@@ -81,6 +81,15 @@ class HomeScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
+            SwitchListTile(
+              title: const Text('Noise Reduction'),
+              subtitle: Text(vm.noiseReductionEnabled ? 'ON' : 'OFF'),
+              value: vm.noiseReductionEnabled,
+              onChanged: (value) async {
+                await vm.setNoiseReductionEnabled(value);
+              },
+            ),
+            const SizedBox(height: 20),
             if (vm.errorMessage != null)
               Text(vm.errorMessage!, style: const TextStyle(color: Colors.red)),
           ],

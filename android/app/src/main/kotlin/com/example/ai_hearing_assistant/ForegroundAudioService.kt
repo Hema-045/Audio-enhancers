@@ -1,5 +1,6 @@
 package com.example.ai_hearing_assistant
 
+import com.example.ai_hearing_assistant.dsp.AudxProcessor
 import java.util.concurrent.atomic.AtomicBoolean
 import com.example.ai_hearing_assistant.audio.AudioPipeline
 import android.app.*
@@ -24,10 +25,13 @@ class ForegroundAudioService : Service() {
     private var streamingThread: Thread? = null
     private val streaming = AtomicBoolean(false)
     private var audioPipeline: AudioPipeline? = null
+    private var audxProcessor: AudxProcessor? = null
+    private var noiseReductionEnabled = false
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        instance = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -56,6 +60,7 @@ class ForegroundAudioService : Service() {
 
     override fun onDestroy() {
         stopAudioStreaming()
+        instance = null
         super.onDestroy()
     }
 
@@ -99,28 +104,32 @@ class ForegroundAudioService : Service() {
         audioManager.mode = AudioManager.MODE_NORMAL
         try { audioManager.isSpeakerphoneOn = false } catch (e: Exception) {}
 
-        val sampleRate = 48000
+        val sampleRate = 16000
         val channelIn = AudioFormat.CHANNEL_IN_MONO
         val channelOut = AudioFormat.CHANNEL_OUT_MONO
         val encoding = AudioFormat.ENCODING_PCM_16BIT
+        val frameSize = 160
+
         var minIn = AudioRecord.getMinBufferSize(sampleRate, channelIn, encoding)
         if (minIn == AudioRecord.ERROR || minIn == AudioRecord.ERROR_BAD_VALUE) minIn = 2048
         var minOut = AudioTrack.getMinBufferSize(sampleRate, channelOut, encoding)
         if (minOut == AudioTrack.ERROR || minOut == AudioTrack.ERROR_BAD_VALUE) minOut = 2048
 
-        // Log runtime buffer configuration reported by Android
+        // Use larger stable buffers for AudX processing instead of the Android minimums.
+        val recordBufferSize = maxOf(minIn * 4, frameSize * 10 * 2)
+        val trackBufferSize = maxOf(minOut * 4, frameSize * 10 * 2)
+
+        // Log runtime buffer configuration reported by Android and the chosen sizes.
         try {
             val bytesPerFrame = 2 // PCM 16-bit mono = 2 bytes per frame
-            val recordBufferBytes = minIn
-            val trackBufferBytes = minOut
-            val recordBufferMs = recordBufferBytes.toDouble() / bytesPerFrame / sampleRate.toDouble() * 1000.0
-            val trackBufferMs = trackBufferBytes.toDouble() / bytesPerFrame / sampleRate.toDouble() * 1000.0
-            Log.d(TAG, "BUFFER_INFO: sampleRate=$sampleRate bytesPerFrame=$bytesPerFrame minIn(bytes)=$recordBufferBytes minOut(bytes)=$trackBufferBytes recordBuf_ms=$recordBufferMs trackBuf_ms=$trackBufferMs")
+            val recordBufferMs = recordBufferSize.toDouble() / bytesPerFrame / sampleRate.toDouble() * 1000.0
+            val trackBufferMs = trackBufferSize.toDouble() / bytesPerFrame / sampleRate.toDouble() * 1000.0
+            Log.d(TAG, "CONFIG: sampleRate=$sampleRate minIn=$minIn minOut=$minOut recordBufferSize=$recordBufferSize trackBufferSize=$trackBufferSize recordBuf_ms=$recordBufferMs trackBuf_ms=$trackBufferMs")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to compute buffer info", e)
         }
 
-        val record = AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate, channelIn, encoding, minIn)
+        val record = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, sampleRate, channelIn, encoding, recordBufferSize)
 
         val audioAttrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
@@ -135,7 +144,7 @@ class ForegroundAudioService : Service() {
         val trackBuilder = AudioTrack.Builder()
             .setAudioAttributes(audioAttrs)
             .setAudioFormat(audioFormat)
-            .setBufferSizeInBytes(minOut)
+            .setBufferSizeInBytes(trackBufferSize)
             .setTransferMode(AudioTrack.MODE_STREAM)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             trackBuilder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
@@ -181,39 +190,59 @@ class ForegroundAudioService : Service() {
         }
         audioPipeline = AudioPipeline(
     sampleRate = sampleRate,
-    frameSize = 128
+    frameSize = 160
 )
+        audxProcessor = AudxProcessor()
         streaming.set(true)
         streamingThread = Thread {
             try {
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
                 record.startRecording()
                 track.play()
-                val buffer = ShortArray(128)
+                val inputBuffer = ShortArray(160)
+                val outputBuffer = ShortArray(160)
                 while (streaming.get()) {
-                    val read = record.read(buffer, 0, buffer.size)
-                    val tRead = System.nanoTime()
-                    if (read > 0) {
+                    val read = record.read(inputBuffer, 0, inputBuffer.size)
+                val tRead = System.nanoTime()
+                if (read > 0) {
+                    Log.d(TAG, "RECORD_READ: read=$read sampleRate=$sampleRate")
+                    Log.d(TAG, "INPUT_SAMPLES: ${inputBuffer.take(minOf(read, 10)).joinToString()}")
 
-    audioPipeline?.process(buffer, read)
+                    audioPipeline?.process(inputBuffer, read)
+                    if (noiseReductionEnabled) {
+                        audxProcessor?.process(inputBuffer, outputBuffer)
+                        Log.d(TAG, "AUDX_OUTPUT_SAMPLES: ${outputBuffer.take(minOf(read, 10)).joinToString()}")
+                        val written = track.write(outputBuffer, 0, read)
+                        if (written < 0) {
+                            Log.e(TAG, "TRACK_WRITE_ERROR: result=$written")
+                        } else {
+                            Log.d(TAG, "TRACK_WRITE: wrote=$written")
+                        }
+                    } else {
+                        val written = track.write(inputBuffer, 0, read)
+                        if (written < 0) {
+                            Log.e(TAG, "TRACK_WRITE_ERROR: result=$written")
+                        } else {
+                            Log.d(TAG, "TRACK_WRITE: wrote=$written")
+                        }
+                    }
 
-    track.write(buffer, 0, read)
+                    val tWrite = System.nanoTime()
+                    val latencyMs = (tWrite - tRead) / 1_000_000.0
 
-    val tWrite = System.nanoTime()
-
-    val latencyMs = (tWrite - tRead) / 1_000_000.0
-
-    Log.d(
-        TAG,
-        "Audio chunk read=$read latency_ms=$latencyMs read_ts=$tRead write_ts=$tWrite"
-    )
-}
+                    Log.d(
+                        TAG,
+                        "Audio chunk read=$read latency_ms=$latencyMs noiseReductionEnabled=$noiseReductionEnabled"
+                    )
+                }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Audio stream error", e)
             } finally {
                 audioPipeline?.release()
                 audioPipeline = null
+                audxProcessor?.release()
+                audxProcessor = null
                 try { record.stop(); record.release() } catch (e: Exception) {}
                 try { track.stop(); track.release() } catch (e: Exception) {}
             }
@@ -228,7 +257,13 @@ class ForegroundAudioService : Service() {
     }
 
     companion object {
+        private var instance: ForegroundAudioService? = null
+
         const val ACTION_START = "com.example.ai_hearing_assistant.action.START"
         const val ACTION_STOP = "com.example.ai_hearing_assistant.action.STOP"
+
+        fun setNoiseReductionEnabled(enabled: Boolean) {
+            instance?.noiseReductionEnabled = enabled
+        }
     }
 }

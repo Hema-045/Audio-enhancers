@@ -78,6 +78,15 @@ class MethodChannelService {
     }
   }
 
+  Future<bool> setNoiseReductionEnabled(bool enabled) async {
+    try {
+      final res = await _channel.invokeMethod<bool>('setNoiseReductionEnabled', {'enabled': enabled});
+      return res ?? true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   Future<bool> requestMicrophonePermission() async {
     final status = await Permission.microphone.request();
     return status.isGranted;

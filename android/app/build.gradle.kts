@@ -43,3 +43,13 @@ kotlin {
 flutter {
     source = "../.."
 }
+repositories {
+    flatDir {
+        dirs("libs")
+    }
+}
+
+dependencies {
+    implementation(files("libs/audx-core-release.aar"))
+    implementation(files("libs/audx-arm64-v8a-release.aar"))
+}
