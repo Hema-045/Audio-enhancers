@@ -11,6 +11,8 @@ class AudioViewModel extends ChangeNotifier {
   String _bluetooth = 'Unknown';
   String? _errorMessage;
   bool _noiseReductionEnabled = false;
+  bool _amplificationEnabled = false;
+  double _amplificationGain = 2.0;
 
   AudioViewModel() {
     refreshStatus();
@@ -20,6 +22,8 @@ class AudioViewModel extends ChangeNotifier {
   String get streamingStatus => _state.name;
   String? get errorMessage => _errorMessage;
   bool get noiseReductionEnabled => _noiseReductionEnabled;
+  bool get amplificationEnabled => _amplificationEnabled;
+  double get amplificationGain => _amplificationGain;
 
   Future<void> refreshStatus() async {
     var bt = await _mc.getBluetoothStatus();
@@ -105,6 +109,22 @@ class AudioViewModel extends ChangeNotifier {
       _noiseReductionEnabled = enabled;
       notifyListeners();
     }
+  }
+
+  void setAmplificationEnabled(bool enabled) {
+    _amplificationEnabled = enabled;
+    notifyListeners();
+    _sendAmplificationState();
+  }
+
+  void setAmplificationGain(double gain) {
+    _amplificationGain = gain;
+    notifyListeners();
+    _sendAmplificationState();
+  }
+
+  void _sendAmplificationState() {
+    _mc.setAmplification(_amplificationEnabled, _amplificationGain);
   }
 
   Future<void> stop() async {

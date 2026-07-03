@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import kotlin.math.roundToInt
 
 class ForegroundAudioService : Service() {
     private val TAG = "ForegroundAudioService"
@@ -27,6 +28,8 @@ class ForegroundAudioService : Service() {
     private var audioPipeline: AudioPipeline? = null
     private var audxProcessor: AudxProcessor? = null
     private var noiseReductionEnabled = false
+    private var amplificationEnabled = false
+    private var amplificationGain = 2.0
 
     override fun onCreate() {
         super.onCreate()
@@ -211,6 +214,9 @@ class ForegroundAudioService : Service() {
                     audioPipeline?.process(inputBuffer, read)
                     if (noiseReductionEnabled) {
                         audxProcessor?.process(inputBuffer, outputBuffer)
+                        if (amplificationEnabled) {
+                            applyAmplification(outputBuffer, read, amplificationGain)
+                        }
                         Log.d(TAG, "AUDX_OUTPUT_SAMPLES: ${outputBuffer.take(minOf(read, 10)).joinToString()}")
                         val written = track.write(outputBuffer, 0, read)
                         if (written < 0) {
@@ -219,6 +225,9 @@ class ForegroundAudioService : Service() {
                             Log.d(TAG, "TRACK_WRITE: wrote=$written")
                         }
                     } else {
+                        if (amplificationEnabled) {
+                            applyAmplification(inputBuffer, read, amplificationGain)
+                        }
                         val written = track.write(inputBuffer, 0, read)
                         if (written < 0) {
                             Log.e(TAG, "TRACK_WRITE_ERROR: result=$written")
@@ -256,6 +265,27 @@ class ForegroundAudioService : Service() {
         streamingThread = null
     }
 
+    private fun applyAmplification(samples: ShortArray, length: Int, gain: Double) {
+        if (gain == 1.0) return
+        for (i in 0 until length) {
+            val amplified = (samples[i].toInt() * gain).roundToInt()
+            samples[i] = when {
+                amplified > Short.MAX_VALUE -> Short.MAX_VALUE
+                amplified < Short.MIN_VALUE -> Short.MIN_VALUE
+                else -> amplified.toShort()
+            }
+        }
+    }
+
+    private fun setAmplification(enabled: Boolean, gain: Double) {
+        val gainChanged = amplificationGain != gain
+        amplificationEnabled = enabled
+        amplificationGain = gain
+        if (amplificationEnabled && gainChanged) {
+            Log.d(TAG, "Amplification Enabled\nGain = ${"%.1f".format(gain)}")
+        }
+    }
+
     companion object {
         private var instance: ForegroundAudioService? = null
 
@@ -264,6 +294,10 @@ class ForegroundAudioService : Service() {
 
         fun setNoiseReductionEnabled(enabled: Boolean) {
             instance?.noiseReductionEnabled = enabled
+        }
+
+        fun setAmplification(enabled: Boolean, gain: Double) {
+            instance?.setAmplification(enabled, gain)
         }
     }
 }

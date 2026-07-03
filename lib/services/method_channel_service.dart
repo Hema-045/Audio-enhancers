@@ -87,6 +87,18 @@ class MethodChannelService {
     }
   }
 
+  Future<bool> setAmplification(bool enabled, double gain) async {
+    try {
+      final res = await _channel.invokeMethod<bool>('setAmplification', {
+        'enabled': enabled,
+        'gain': gain,
+      });
+      return res ?? true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   Future<bool> requestMicrophonePermission() async {
     final status = await Permission.microphone.request();
     return status.isGranted;

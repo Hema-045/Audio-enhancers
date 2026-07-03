@@ -69,6 +69,16 @@ class MainActivity : FlutterActivity() {
 						ForegroundAudioService.setNoiseReductionEnabled(enabled)
 						result.success(true)
 					}
+					"setAmplification" -> {
+						val enabled = call.argument<Boolean>("enabled") ?: false
+						val gain = call.argument<Double>("gain") ?: 2.0
+						ForegroundAudioService.setAmplification(enabled, gain)
+						android.util.Log.d(
+							"MainActivity",
+							"Amplification Updated\nEnabled: $enabled\nGain: $gain"
+						)
+						result.success(true)
+					}
 				else -> result.notImplemented()
 			}
 		}
